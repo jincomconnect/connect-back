@@ -1,0 +1,5 @@
+{
+  "task_id": "feature-community-search-v1",
+  "prompt": "Design and deliver a first version of community search with filters by topic and member count, pagination, and empty/error/loading states.",
+  "product_context": "Frontend is React + Vite. Backend currently has auth endpoints and MongoDB. Keep implementation incremental and backward compatible."
+}
