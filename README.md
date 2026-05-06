@@ -1,199 +1,118 @@
 # Connect Backend
 
-Express + Mongo backend with JWT auth and a Python multi-agent orchestration sidecar.
+This repository contains your backend code and the AI orchestrator sidecar.
 
-## What We Built
+## Repository Layout
 
-The backend now supports a 5-stage multi-agent workflow:
-
-1. research
-2. architect
-3. design
-4. implement
-5. test
-
-Flow:
-
-1. Client calls `POST /api/agents/run` on the Node backend.
-2. Node validates JWT using existing auth middleware.
-3. Node forwards the request to the Python orchestrator (`/orchestrate`).
-4. Orchestrator runs all five stages and returns structured output.
-
-Structured stage output fields:
-
-- assumptions
-- decisions
-- artifacts
-- open_questions
-- confidence_score
-
-## Architecture
-
-- Node API: existing Express app (`app.js`, `server.js`).
-- Agent proxy route: `routes/agents.js`.
-- Orchestrator service: `ai-orchestrator/` (FastAPI + AutoGen-ready workflow).
-- Stage contracts: `ai-orchestrator/app/schemas.py`.
-- Stage prompt specs: `ai-orchestrator/app/agents.py`.
-- Pipeline runner: `ai-orchestrator/app/workflow.py`.
-
-## Prerequisites
-
-- Node.js 18+ (required for global `fetch` in proxy route).
-- Python 3.10+.
-
-## Environment Setup
-
-### Backend `.env`
-
-Copy and edit:
-
-```bash
-cp .env.example .env
+```text
+connect-back/
+  python-backend/       # your main backend service for frontend API
+  ai-orchestrator/      # 4-agent Claude pipeline service
 ```
 
-Important values:
+## Current Deployment Model
 
-- `PORT` (default `8080`)
-- `MONGO_URI`
-- `JWT_SECRET`
-- `AUTOGEN_URL` (default `http://localhost:9000`)
-- `ORCHESTRATOR_BEARER_TOKEN`
-- `ORCHESTRATOR_TIMEOUT_MS` (default `60000`)
+- Keep both services in this same repository.
+- Run them on different ports.
+- Share the same JWT_SECRET value so orchestrator accepts user tokens issued by backend.
 
-### Orchestrator `.env`
+## Service Ports
 
-```bash
-cd ai-orchestrator
-cp .env.example .env
-```
-
-Important values:
-
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL` (default `gpt-4o-mini`)
-- `ORCHESTRATOR_BEARER_TOKEN` (must match backend)
-- `PORT` (default `9000`)
+- python-backend: 8000
+- ai-orchestrator: 9000
 
 ## Run Locally
 
-### 1) Install backend dependencies
+Open two terminals.
+
+### Terminal 1: python-backend
 
 ```bash
-npm install
+cd python-backend
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+cp .env.example .env
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-### 2) Install orchestrator dependencies
+### Terminal 2: ai-orchestrator
 
 ```bash
-npm run orchestrator:install
+cd ai-orchestrator
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+uvicorn app.main:app --reload --host 127.0.0.1 --port 9000
 ```
 
-### 3) Start orchestrator
+## Orchestrator Environment
 
-```bash
-npm run orchestrator:dev
+Set these in ai-orchestrator/.env:
+
+```env
+JWT_SECRET=your-secret-key
+CLIENT_ORIGIN=http://localhost:5173,http://127.0.0.1:5173
+ANTHROPIC_API_KEY=sk-ant-...
+CLAUDE_OPUS_MODEL=claude-opus-4-5
+CLAUDE_SONNET_MODEL=claude-sonnet-4-5
+CLAUDE_HAIKU_MODEL=claude-haiku-3-5
+PORT=9000
 ```
 
-### 4) Start backend
+Important: JWT_SECRET must exactly match the value used by python-backend.
 
-In a second terminal:
+## Orchestrator API
 
-```bash
-npm run dev
-```
-
-## API Usage
-
-### Auth
-
-This route requires JWT auth. Use your existing login flow and send:
+### Health
 
 ```http
-Authorization: Bearer <jwt>
+GET /health
 ```
 
-### Run multi-agent workflow
+### Run 4-agent pipeline
 
-`POST /api/agents/run`
+```http
+POST /orchestrate
+Authorization: Bearer <jwt-from-python-backend>
+Content-Type: application/json
+```
 
 Request body:
 
 ```json
 {
-  "taskId": "feature-community-search-v1",
-  "prompt": "Design and deliver community search with filters, pagination, and loading/empty/error states.",
-  "productContext": "Frontend is React + Vite, backend is Express + Mongo, keep v1 incremental."
+  "prompt": "Add a community search endpoint with keyword filtering and pagination.",
+  "product_context": "Use existing backend patterns from python-backend/app and keep API backward compatible."
 }
 ```
 
-Successful response shape:
+task_id is optional. If omitted, a UUID is generated automatically.
 
-```json
-{
-  "task_id": "feature-community-search-v1",
-  "created_at": "2026-05-06T00:00:00.000000+00:00",
-  "stages": [
-    {
-      "stage": "research",
-      "assumptions": [],
-      "decisions": [],
-      "artifacts": [{ "name": "...", "content": "..." }],
-      "open_questions": [],
-      "confidence_score": 0.8
-    }
-  ],
-  "summary": "Workflow complete across 5 stages..."
-}
+## Optional Future Split: Move ai-orchestrator to Separate Repository
+
+If you later want a dedicated repo for the orchestrator, this is a good and clean split. Keep python-backend here and extract only ai-orchestrator.
+
+### Option A: subtree split (recommended)
+
+```bash
+cd connect-back
+git subtree split --prefix=ai-orchestrator -b ai-orchestrator-history
+git init ../ai-orchestrator-repo
+cd ../ai-orchestrator-repo
+git pull ../connect-back ai-orchestrator-history
 ```
 
-## How To Update The Multi-Agent System
+This preserves ai-orchestrator commit history.
 
-### Change stage behavior (prompts/objectives)
+### Option B: copy-only bootstrap
 
-Edit:
-
-- `ai-orchestrator/app/agents.py`
-
-You can update each stage role/objective and prompt instructions.
-
-### Change output schema
-
-Edit:
-
-- `ai-orchestrator/app/schemas.py`
-- `ai-orchestrator/app/workflow.py` (parser/fallback handling)
-
-If you add/remove fields, update both schema and parser.
-
-### Change stage order
-
-Edit:
-
-- `ai-orchestrator/app/workflow.py` (`STAGES` list)
-
-### Add approval gates
-
-Recommended next step:
-
-1. Stop after `design`.
-2. Return a `pending_approval` status.
-3. Add a second endpoint that resumes from `implement` after explicit approval.
-
-### Add tool execution or code generation safety
-
-Recommended:
-
-- Keep implement stage read-only first (plans/patch proposals).
-- Add hard limits (`max_turns`, timeout, budget).
-- Add audit logs per task_id.
-
-## Fallback Mode
-
-If `OPENAI_API_KEY` is not set or model client import fails, orchestrator returns deterministic scaffold outputs so the workflow can still be tested end-to-end.
+Copy ai-orchestrator folder into a new repository and initialize git there. Faster, but history is not preserved.
 
 ## Troubleshooting
 
-- `Global fetch is unavailable`: run Node 18+.
-- `401 Unauthorized` from orchestrator: ensure `ORCHESTRATOR_BEARER_TOKEN` matches in both services.
-- `504 Orchestrator timeout`: increase `ORCHESTRATOR_TIMEOUT_MS` or reduce workload.
-- No model responses: verify `OPENAI_API_KEY` in `ai-orchestrator/.env`.
+- 401 on /orchestrate: token missing/expired; obtain a fresh token from python-backend login.
+- 403 on /orchestrate: JWT_SECRET mismatch between python-backend and ai-orchestrator.
+- ModuleNotFoundError for autogen_ext.models.anthropic: reinstall ai-orchestrator dependencies.
+- Pipeline returns fallback mode BLOCKED: set ANTHROPIC_API_KEY and restart service.

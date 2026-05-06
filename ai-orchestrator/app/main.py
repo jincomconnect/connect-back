@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from .auth import router as auth_router
 from .schemas import WorkflowRequest
 from .workflow import run_workflow
 
@@ -15,10 +14,6 @@ load_dotenv()
 
 app = FastAPI(title="Multi-Agent Orchestrator", version="0.1.0")
 
-# ---------------------------------------------------------------------------
-# CORS — allow the same origins as the Node backend so the UI can reach us
-# directly.  Set CLIENT_ORIGIN in .env to override (comma-separated).
-# ---------------------------------------------------------------------------
 _raw_origins = os.getenv("CLIENT_ORIGIN", "http://localhost:5173,http://127.0.0.1:5173")
 _allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
@@ -29,8 +24,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-app.include_router(auth_router, prefix="/api")
 
 
 def _require_user(authorization: str | None) -> dict:

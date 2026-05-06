@@ -1,11 +1,8 @@
 fastapi==0.115.6
 uvicorn==0.34.0
 pydantic==2.10.5
-pydantic[email]==2.10.5
 python-dotenv==1.0.1
 httpx==0.28.1
 PyJWT==2.10.1
-motor==3.7.0
-passlib[bcrypt]==1.7.4
 autogen-agentchat==0.4.8
 autogen-ext[anthropic]==0.4.8
