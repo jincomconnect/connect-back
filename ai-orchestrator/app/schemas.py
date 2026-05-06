@@ -6,7 +6,7 @@ from typing import List, Literal
 from pydantic import BaseModel, Field
 
 
-StageName = Literal["research", "architect", "design", "implement", "test"]
+StageName = Literal["architect", "worker", "tester", "reviewer"]
 
 
 class Artifact(BaseModel):

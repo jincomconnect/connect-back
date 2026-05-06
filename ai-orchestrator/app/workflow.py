@@ -6,73 +6,92 @@ from typing import Dict, List
 
 from pydantic import ValidationError
 
-from .agents import agent_prompt, default_model
+from .agents import (
+    AGENT_SYSTEM_PROMPTS,
+    STAGE_MODELS,
+    build_user_message,
+    make_assistant_agent,
+)
 from .schemas import Artifact, StageName, StageOutput, WorkflowRequest, WorkflowResult
 
-STAGES: List[StageName] = ["research", "architect", "design", "implement", "test"]
+# Pipeline order: plan → implement → validate → gate
+STAGES: List[StageName] = ["architect", "worker", "tester", "reviewer"]
 
 
-class LLMRunner:
-    def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY", "")
-        self.model_name = default_model()
+def _fallback_response(stage: StageName) -> str:
+    """Deterministic scaffold output used when ANTHROPIC_API_KEY is missing."""
+    return json.dumps(
+        {
+            "assumptions": [
+                f"Fallback mode active for stage '{stage}': ANTHROPIC_API_KEY missing or autogen-ext[anthropic] not installed.",
+                "Set ANTHROPIC_API_KEY in ai-orchestrator/.env to enable live Claude agents.",
+            ],
+            "decisions": [
+                "Pipeline schema and contract can be validated in fallback mode.",
+                "Reviewer will block all PRs in fallback mode until live agents are enabled.",
+            ],
+            "artifacts": [
+                {
+                    "name": "scaffold-note",
+                    "content": f"BLOCKED — stage '{stage}' ran in fallback mode. No Claude API key configured.",
+                }
+            ],
+            "open_questions": [
+                "Is ANTHROPIC_API_KEY set in ai-orchestrator/.env?",
+                "Are autogen-ext[anthropic] packages installed?",
+            ],
+            "confidence_score": 0.1,
+        }
+    )
 
-    async def run(self, prompt: str) -> str:
-        # AutoGen client is loaded lazily so local development can run without AI credentials.
-        if not self.api_key:
-            return self._fallback_response(prompt)
 
-        try:
-            from autogen_ext.models.openai import OpenAIChatCompletionClient
-        except ImportError:
-            return self._fallback_response(prompt)
+async def _run_stage_with_agent(
+    stage: StageName,
+    user_message: str,
+    api_key: str,
+) -> str:
+    """
+    Create a dedicated AssistantAgent for the stage backed by a Claude model,
+    send it the user message, and return the raw text of its reply.
 
-        client = OpenAIChatCompletionClient(model=self.model_name, api_key=self.api_key)
-        result = await client.create(messages=[{"role": "user", "content": prompt}])
-        content = result.content
+    Model assignments:
+      architect → claude-opus   (reads everything, plans without code)
+      worker    → claude-sonnet (implements the plan, writes tests)
+      tester    → claude-haiku  (fast validation of coverage rules)
+      reviewer  → claude-opus   (final gate, blocks or approves)
+    """
+    from autogen_agentchat.messages import TextMessage
+    from autogen_core import CancellationToken
+    from autogen_ext.models.anthropic import AnthropicChatCompletionClient
 
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            chunks = [item.get("text", "") for item in content if isinstance(item, dict)]
-            return "\n".join(chunks).strip() or self._fallback_response(prompt)
+    model_name = STAGE_MODELS[stage]
+    model_client = AnthropicChatCompletionClient(model=model_name, api_key=api_key)
+    agent = make_assistant_agent(stage, model_client)
 
-        return self._fallback_response(prompt)
+    response = await agent.on_messages(
+        [TextMessage(content=user_message, source="user")],
+        cancellation_token=CancellationToken(),
+    )
 
-    def _fallback_response(self, prompt: str) -> str:
-        # Deterministic scaffold output for bootstrapping the system before model credentials are ready.
-        return json.dumps(
-            {
-                "assumptions": [
-                    "This is scaffold mode because OPENAI_API_KEY is missing or AutoGen client is unavailable.",
-                    "Team can iterate prompts and schemas before enabling live model calls.",
-                ],
-                "decisions": [
-                    "Proceed with artifact-driven multi-agent pipeline.",
-                    "Keep approval gate between design and implementation.",
-                ],
-                "artifacts": [
-                    {
-                        "name": "scaffold-note",
-                        "content": "Generated deterministic stage output in fallback mode.",
-                    }
-                ],
-                "open_questions": [
-                    "Which model and cost budget should be enforced in production?",
-                    "Should implement stage be allowed write tools or patch proposals only?",
-                ],
-                "confidence_score": 0.42,
-            }
-        )
+    reply = response.chat_message.content
+    return reply if isinstance(reply, str) else json.dumps(reply)
 
 
 async def run_workflow(request: WorkflowRequest) -> WorkflowResult:
-    runner = LLMRunner()
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    use_agents = bool(api_key)
+
+    if use_agents:
+        try:
+            import autogen_ext.models.anthropic  # noqa: F401
+        except ImportError:
+            use_agents = False
+
     outputs: List[StageOutput] = []
 
     for stage in STAGES:
         prior_json = json.dumps([item.model_dump() for item in outputs], ensure_ascii=True)
-        prompt = agent_prompt(
+        user_message = build_user_message(
             stage=stage,
             task_id=request.task_id,
             user_prompt=request.prompt,
@@ -80,7 +99,21 @@ async def run_workflow(request: WorkflowRequest) -> WorkflowResult:
             prior_json=prior_json,
         )
 
-        raw = await runner.run(prompt)
+        if use_agents:
+            try:
+                raw = await _run_stage_with_agent(stage, user_message, api_key)
+            except Exception as exc:
+                # Surface the real error as an artifact rather than silently falling back.
+                raw = json.dumps({
+                    "assumptions": [f"Agent call failed: {exc}"],
+                    "decisions": [],
+                    "artifacts": [{"name": "error", "content": str(exc)}],
+                    "open_questions": ["Check ANTHROPIC_API_KEY, model name, and network access."],
+                    "confidence_score": 0.0,
+                })
+        else:
+            raw = _fallback_response(stage)
+
         stage_output = _parse_stage_output(stage, raw)
         outputs.append(stage_output)
 

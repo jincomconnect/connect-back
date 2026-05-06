@@ -4,4 +4,4 @@ pydantic==2.10.5
 python-dotenv==1.0.1
 httpx==0.28.1
 autogen-agentchat==0.4.8
-autogen-ext[openai]==0.4.8
+autogen-ext[anthropic]==0.4.8

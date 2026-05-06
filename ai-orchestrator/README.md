@@ -60,9 +60,9 @@ curl -X POST http://localhost:9000/orchestrate \
   --data @examples/feature-request.json
 ```
 
-## Backend Integration (Node API)
+## Backend Integration (Python API)
 
-Node endpoint:
+Python backend endpoint:
 
 - `POST /api/agents/run`
 
@@ -76,11 +76,59 @@ Request body:
 }
 ```
 
-Required backend env vars:
+Required Python backend env vars:
 
 - `AUTOGEN_URL=http://localhost:9000`
 - `ORCHESTRATOR_BEARER_TOKEN=change-me`
-- `ORCHESTRATOR_TIMEOUT_MS=60000`
+
+## Prompt Execution Flow
+
+For each request, the orchestrator runs stages in this fixed order:
+
+1. `research`
+2. `architect`
+3. `design`
+4. `implement`
+5. `test`
+
+Each stage receives the same base inputs (`task_id`, `prompt`, `product_context`) plus prior stage outputs as context. This creates a chained execution where later stages build on earlier decisions.
+
+```text
+prompt + product_context
+  -> research output
+  -> architect output (research-aware)
+  -> design output (research + architect-aware)
+  -> implement output (all prior context)
+  -> test output (all prior context)
+```
+
+## Example Request + Stage Behavior
+
+Example request:
+
+```json
+{
+  "task_id": "feature-community-search-v1",
+  "prompt": "Design and deliver community search with filters, pagination, and loading/empty/error states.",
+  "product_context": "Frontend is React + Vite, backend is FastAPI + Mongo, keep v1 incremental."
+}
+```
+
+How the stages typically interpret it:
+
+- `research`: identifies constraints, unknowns, and initial risks.
+- `architect`: proposes high-level service/data strategy and trade-offs.
+- `design`: defines API/data contracts and user-state behavior.
+- `implement`: outputs concrete implementation steps and deliverables.
+- `test`: outputs validation strategy and specific test cases.
+
+All stages return the same schema keys:
+
+- `assumptions`
+- `decisions`
+- `artifacts`
+- `open_questions`
+- `confidence_score`
 
 ## Notes
 
