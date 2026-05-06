@@ -45,6 +45,155 @@ def _fallback_response(stage: StageName) -> str:
     )
 
 
+def _sandbox_stage_response(
+    stage: StageName,
+    prompt: str,
+    product_context: str,
+    prior_stages: List[StageOutput],
+) -> StageOutput:
+    """
+    Return a structured description of what the given stage *would* do,
+    without calling any Claude model. Confidence is always 0.0 to signal
+    that no real analysis was performed.
+    """
+    _prior = ", ".join(s.stage for s in prior_stages) if prior_stages else "none"
+    _ctx_note = f"Product context provided ({len(product_context)} chars)." if product_context else "No product context supplied."
+
+    _stage_plans: dict[StageName, dict] = {
+        "architect": {
+            "assumptions": [
+                f"Would analyse the prompt: '{prompt[:120]}{'...' if len(prompt) > 120 else ''}'",
+                _ctx_note,
+                "Would identify key system components, boundaries, and dependencies.",
+                "Would decide on high-level patterns (layering, data flow, API surface).",
+            ],
+            "decisions": [
+                "Select appropriate architecture pattern (e.g. layered, hexagonal, event-driven).",
+                "Define module responsibilities and inter-service contracts.",
+                "Specify data models and storage strategy.",
+                "Document cross-cutting concerns: auth, logging, error handling.",
+            ],
+            "artifacts": [
+                {
+                    "name": "architecture-plan",
+                    "content": (
+                        "[SANDBOX] Would produce an architecture plan including:\n"
+                        "  - Component diagram and data-flow description\n"
+                        "  - API contract definitions (routes, request/response shapes)\n"
+                        "  - Data model schemas\n"
+                        "  - Tech stack recommendations with rationale"
+                    ),
+                }
+            ],
+            "open_questions": [
+                "What are the scalability requirements?",
+                "Are there existing patterns in the codebase that must be followed?",
+                "What external services or APIs will be integrated?",
+            ],
+        },
+        "worker": {
+            "assumptions": [
+                f"Would consume architect output (prior stages: {_prior}).",
+                "Would translate architecture decisions into concrete implementation.",
+                f"Prompt intent: '{prompt[:120]}{'...' if len(prompt) > 120 else ''}'",
+            ],
+            "decisions": [
+                "Write feature code following architecture plan file structure.",
+                "Implement unit tests alongside each module.",
+                "Follow project coding standards inferred from product context.",
+                "Produce migration scripts or schema changes if data models changed.",
+            ],
+            "artifacts": [
+                {
+                    "name": "implementation-plan",
+                    "content": (
+                        "[SANDBOX] Would produce implementation artifacts:\n"
+                        "  - Source files for each module identified by architect\n"
+                        "  - Unit test files (co-located or in __tests__ / tests/)\n"
+                        "  - Database migration scripts (if applicable)\n"
+                        "  - Updated dependency list (requirements.txt / package.json)"
+                    ),
+                }
+            ],
+            "open_questions": [
+                "Which existing files need modification vs new files?",
+                "Are there shared utilities or helpers to reuse?",
+                "What test framework and coverage threshold is expected?",
+            ],
+        },
+        "tester": {
+            "assumptions": [
+                f"Would validate worker output (prior stages: {_prior}).",
+                "Would check test coverage completeness and edge-case handling.",
+                "Would verify API contracts match architect spec.",
+            ],
+            "decisions": [
+                "Run static analysis to surface obvious defects.",
+                "Check that every public function/route has at least one test.",
+                "Flag missing error-path tests (400s, 500s, auth failures).",
+                "Validate schema consistency between layers.",
+            ],
+            "artifacts": [
+                {
+                    "name": "test-validation-report",
+                    "content": (
+                        "[SANDBOX] Would produce a validation report:\n"
+                        "  - Coverage analysis per module\n"
+                        "  - List of untested edge cases\n"
+                        "  - Schema drift findings\n"
+                        "  - PASS / FAIL verdict per acceptance criterion"
+                    ),
+                }
+            ],
+            "open_questions": [
+                "What is the minimum acceptable coverage percentage?",
+                "Are integration or E2E tests in scope for this task?",
+                "Should performance benchmarks be included?",
+            ],
+        },
+        "reviewer": {
+            "assumptions": [
+                f"Would gate the entire pipeline (prior stages: {_prior}).",
+                "Would weigh confidence scores from all prior stages.",
+                "Would enforce project-level standards and PR conventions.",
+            ],
+            "decisions": [
+                "Verify all open questions from prior stages are addressed or explicitly deferred.",
+                "Check security posture: input validation, auth, secrets management.",
+                "Assess whether implementation matches architect intent.",
+                "Issue APPROVED or BLOCKED verdict with rationale.",
+            ],
+            "artifacts": [
+                {
+                    "name": "review-summary",
+                    "content": (
+                        "[SANDBOX] APPROVED (dry-run placeholder)\n"
+                        "Would produce a review summary:\n"
+                        "  - Stage-by-stage confidence assessment\n"
+                        "  - Security checklist results\n"
+                        "  - Required changes before merge (blockers)\n"
+                        "  - Recommended improvements (non-blocking)"
+                    ),
+                }
+            ],
+            "open_questions": [
+                "Are there any compliance or audit requirements?",
+                "Has the feature been demoed or reviewed by a product stakeholder?",
+            ],
+        },
+    }
+
+    plan = _stage_plans[stage]
+    return StageOutput(
+        stage=stage,
+        assumptions=plan["assumptions"],
+        decisions=plan["decisions"],
+        artifacts=[Artifact(**a) for a in plan["artifacts"]],
+        open_questions=plan["open_questions"],
+        confidence_score=0.0,
+    )
+
+
 async def _run_stage_with_agent(
     stage: StageName,
     user_message: str,
@@ -78,7 +227,28 @@ async def _run_stage_with_agent(
 
 
 async def run_workflow(request: WorkflowRequest) -> WorkflowResult:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    # Sandbox runs without any API key — skip agent setup entirely.
+    if request.sandbox:
+        outputs: List[StageOutput] = []
+        for stage in STAGES:
+            outputs.append(_sandbox_stage_response(
+                stage,
+                prompt=request.prompt,
+                product_context=request.product_context,
+                prior_stages=outputs,
+            ))
+        summary = "[SANDBOX / DRY-RUN] " + _summarize(outputs) + " No Claude agents were invoked; this is a plan of what would happen."
+        return WorkflowResult(
+            task_id=request.task_id,
+            created_at=WorkflowResult.now_iso(),
+            stages=outputs,
+            summary=summary,
+            sandbox=True,
+        )
+
+    # Prefer the key supplied in the request body (entered by the user in the UI)
+    # so the key never needs to live in .env or be committed to source control.
+    api_key = (request.api_key or "").strip() or os.getenv("ANTHROPIC_API_KEY", "")
     use_agents = bool(api_key)
 
     if use_agents:
@@ -111,10 +281,13 @@ async def run_workflow(request: WorkflowRequest) -> WorkflowResult:
                     "open_questions": ["Check ANTHROPIC_API_KEY, model name, and network access."],
                     "confidence_score": 0.0,
                 })
+                stage_output = _parse_stage_output(stage, raw)
+            else:
+                stage_output = _parse_stage_output(stage, raw)
         else:
             raw = _fallback_response(stage)
+            stage_output = _parse_stage_output(stage, raw)
 
-        stage_output = _parse_stage_output(stage, raw)
         outputs.append(stage_output)
 
     summary = _summarize(outputs)
@@ -123,6 +296,7 @@ async def run_workflow(request: WorkflowRequest) -> WorkflowResult:
         created_at=WorkflowResult.now_iso(),
         stages=outputs,
         summary=summary,
+        sandbox=False,
     )
 
 

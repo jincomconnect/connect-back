@@ -28,6 +28,8 @@ class WorkflowRequest(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     prompt: str = Field(min_length=10)
     product_context: str = Field(default="")
+    sandbox: bool = Field(default=False, description="Dry-run: explain what each agent would do without calling Claude.")
+    api_key: Optional[str] = Field(default=None, description="Anthropic API key; overrides ANTHROPIC_API_KEY env var when provided.")
 
 
 class WorkflowResult(BaseModel):
@@ -35,6 +37,7 @@ class WorkflowResult(BaseModel):
     created_at: str
     stages: List[StageOutput]
     summary: str
+    sandbox: bool = Field(default=False)
 
     @staticmethod
     def now_iso() -> str:

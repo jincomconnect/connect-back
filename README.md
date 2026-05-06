@@ -14,7 +14,7 @@ connect-back/
 
 - Keep both services in this same repository.
 - Run them on different ports.
-- Share the same JWT_SECRET value so orchestrator accepts user tokens issued by backend.
+- For now, orchestrator runs in local open mode (no JWT required).
 
 ## Service Ports
 
@@ -52,7 +52,6 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 9000
 Set these in ai-orchestrator/.env:
 
 ```env
-JWT_SECRET=your-secret-key
 CLIENT_ORIGIN=http://localhost:5173,http://127.0.0.1:5173
 ANTHROPIC_API_KEY=sk-ant-...
 CLAUDE_OPUS_MODEL=claude-opus-4-5
@@ -60,8 +59,6 @@ CLAUDE_SONNET_MODEL=claude-sonnet-4-5
 CLAUDE_HAIKU_MODEL=claude-haiku-3-5
 PORT=9000
 ```
-
-Important: JWT_SECRET must exactly match the value used by python-backend.
 
 ## Orchestrator API
 
@@ -75,7 +72,6 @@ GET /health
 
 ```http
 POST /orchestrate
-Authorization: Bearer <jwt-from-python-backend>
 Content-Type: application/json
 ```
 
@@ -89,6 +85,23 @@ Request body:
 ```
 
 task_id is optional. If omitted, a UUID is generated automatically.
+
+## Lightweight Runner UI
+
+You can run the pipeline from a browser without curl.
+
+1. Start both services:
+  - python-backend on port 8000
+  - ai-orchestrator on port 9000
+2. Open:
+  - http://localhost:9000/runner
+3. In the page:
+  - Set Orchestrator Base URL (default http://localhost:9000)
+  - Choose target repository (backend or frontend)
+  - Enter prompt and optional product context
+  - Click Run Agents
+
+The UI calls /orchestrate directly and prints full JSON output, including architect, worker, tester, and reviewer stages.
 
 ## Optional Future Split: Move ai-orchestrator to Separate Repository
 
@@ -112,7 +125,6 @@ Copy ai-orchestrator folder into a new repository and initialize git there. Fast
 
 ## Troubleshooting
 
-- 401 on /orchestrate: token missing/expired; obtain a fresh token from python-backend login.
-- 403 on /orchestrate: JWT_SECRET mismatch between python-backend and ai-orchestrator.
+- 401/403 on /orchestrate: if you still see this, restart orchestrator to load the latest auth-disabled code.
 - ModuleNotFoundError for autogen_ext.models.anthropic: reinstall ai-orchestrator dependencies.
 - Pipeline returns fallback mode BLOCKED: set ANTHROPIC_API_KEY and restart service.
