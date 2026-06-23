@@ -7,12 +7,39 @@ It intentionally includes only:
 - app wiring
 - settings management
 - logging setup
-- health endpoint
+- `/api/health` endpoint
+- `/api/login` endpoint
 - database placeholders
 
-No business APIs are implemented yet.
+Business APIs now include a health check and a demo login endpoint.
 
 ## Quick Start
+
+## API Endpoints
+- `GET /api/health`
+- `POST /api/login`
+
+### Demo Login Request
+```json
+{
+  "email": "demo@example.com",
+  "password": "password123"
+}
+```
+
+### Demo Login Response
+```json
+{
+  "access_token": "demo-token-demo@example.com",
+  "token_type": "bearer",
+  "user": {
+    "email": "demo@example.com",
+    "name": "Demo User"
+  }
+}
+```
+
+Override the defaults with `DEMO_USER_EMAIL`, `DEMO_USER_PASSWORD`, and `DEMO_USER_NAME` in `.env`.
 
 ```bash
 cd python-backend
@@ -40,8 +67,8 @@ python-backend/
 
 ## Next Steps
 
-1. Add auth domain models and schemas.
-2. Add dependency injection for DB sessions/clients.
-3. Add API routers by domain (`auth`, `users`, `communities`).
-4. Add service and repository layers.
-5. Add migrations strategy.
+1. Replace the demo login check with a real user model and password hashing.
+2. Add dependency injection for DB sessions and clients.
+3. Split auth logic into dedicated service and repository layers.
+4. Add token signing plus authenticated routes such as `/api/me`.
+5. Add a migrations strategy.

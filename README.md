@@ -12,8 +12,26 @@ connect-back/
 ## Service Port
 
 - python-backend: 8000
+- API base path: /api
 
 ## Run Locally
+
+## Available Endpoints
+- `GET /api/health`
+- `POST /api/login`
+
+
+### Demo Login
+Request body:
+```json
+{
+  "email": "demo@example.com",
+  "password": "password123"
+}
+```
+
+Successful responses return an `access_token`, `token_type`, and `user` object.
+The demo credentials can be overridden with `DEMO_USER_EMAIL`, `DEMO_USER_PASSWORD`, and `DEMO_USER_NAME` in `.env`.
 
 ```bash
 cd python-backend
