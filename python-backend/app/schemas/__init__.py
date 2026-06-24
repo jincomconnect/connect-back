@@ -1,5 +1,5 @@
 """API schemas package."""
 
-from app.schemas.auth import LoginRequest, LoginResponse, LoginUser
+from app.schemas.auth import LoginRequest, LoginResponse, LoginUser, SignupRequest
 
-__all__ = ["LoginRequest", "LoginResponse", "LoginUser"]
+__all__ = ["LoginRequest", "LoginResponse", "LoginUser", "SignupRequest"]
